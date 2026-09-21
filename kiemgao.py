@@ -439,17 +439,26 @@ class ServerScraper:
                                     const badges = flexContainer.querySelectorAll('.badge');
                                     for (const badge of badges) {
                                         const text = badge.innerText || badge.textContent;
-                                        if (text.includes('Google 4 Step')) return 'Octo 4 Step';
-                                        if (text.includes('Google 2 Step')) return 'Octo 2 Step';
-                                        if (text.includes('Google 3 Step')) return 'Octo 3 Step';
+                                        let name = null;
+                                        if (text.includes('Google 4 Step')) name = 'Octo 4';
+                                        else if (text.includes('Google 2 Step')) name = 'Octo 2';
+                                        else if (text.includes('Google 3 Step')) name = 'Octo 3';
+                                        if (!name) continue;
+
+                                        // Số camp nằm trong <small> cạnh badge: "(38 camp | 35.5%)"
+                                        const small = badge.parentElement.querySelector('small');
+                                        const m = small ? small.innerText.match(/(\\d[\\d,.]*)\\s*camp/i) : null;
+                                        return {name: name, camps: m ? m[1] : null};
                                     }
-                                    
+
                                     return null;
                                 }
                             ''')
-                            
+
                             if campaign_name:
-                                campaign_line = f"{campaign_name} - {remaining_codes} mã còn"
+                                camps = campaign_name.get('camps')
+                                camp_part = f" - {camps} camp" if camps else ""
+                                campaign_line = f"{campaign_name['name']}{camp_part} - {remaining_codes} mã"
                                 print(campaign_line)
                                 site_campaign_info.append(campaign_line)
                             else:
