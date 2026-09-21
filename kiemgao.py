@@ -441,9 +441,7 @@ class ServerScraper:
                                         const text = badge.innerText || badge.textContent;
                                         if (text.includes('Google 4 Step')) return 'Octo 4 Step';
                                         if (text.includes('Google 2 Step')) return 'Octo 2 Step';
-                                        if (text.includes('Google (1 Step)')) return 'Octo (1 Step)';
                                         if (text.includes('Google 3 Step')) return 'Octo 3 Step';
-                                        if (text.includes('Socical')) return 'Socical';
                                     }
                                     
                                     return null;
