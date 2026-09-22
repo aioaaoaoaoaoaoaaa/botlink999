@@ -191,6 +191,31 @@ class ServerScraper:
             self.log(f"❌ Lỗi khi tải cookies: {e}")
             return False
     
+    def clear_cookies_cache(self):
+        """Xóa toàn bộ cache cookies và credentials khi gặp lỗi"""
+        try:
+            # Xóa tất cả cookie files
+            if os.path.exists(self.cookies_dir):
+                for filename in os.listdir(self.cookies_dir):
+                    file_path = os.path.join(self.cookies_dir, filename)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                            self.log(f"🗑️  Đã xóa cookie file: {filename}")
+                    except Exception as e:
+                        self.log(f"⚠️  Không thể xóa {filename}: {e}")
+            
+            # Xóa credentials file
+            if os.path.exists(self.credentials_file):
+                os.remove(self.credentials_file)
+                self.log(f"🗑️  Đã xóa credentials file")
+            
+            self.log("✅ Đã dọn dẹp toàn bộ cache cookies và credentials")
+            return True
+        except Exception as e:
+            self.log(f"❌ Lỗi khi dọn dẹp cache: {e}")
+            return False
+    
     def simulate_mouse_movement(self, page):
         """Mô phỏng di chuột ngẫu nhiên như người thật"""
         try:
@@ -309,7 +334,7 @@ class ServerScraper:
             self.log(f"❌ Lỗi đăng nhập: {e}")
             return False
     
-    def scrape_site(self, url, username, password, site_name):
+    def scrape_site(self, url, username, password, site_name, retry_count=0):
         """Scrape một site cụ thể và trả về campaign info"""
         site_campaign_info = []
         
@@ -382,7 +407,16 @@ class ServerScraper:
                             self.log(f"⚠️ [{site_name}] Login thất bại")
                             context.close()
                             browser.close()
-                            return []
+                            
+                            # Nếu login thất bại và chưa retry, dọn dẹp cache và thử lại
+                            if retry_count < 1:
+                                self.log(f"🔄 [{site_name}] Dọn dẹp cache và thử lại từ đầu...")
+                                self.clear_cookies_cache()
+                                time.sleep(2)
+                                return self.scrape_site(url, username, password, site_name, retry_count + 1)
+                            else:
+                                self.log(f"❌ [{site_name}] Đã thử lại 1 lần nhưng vẫn thất bại")
+                                return []
                 
                 # Luôn chuyển sang dashboard (dù có login hay không)
                 dashboard_url = f"https://{domain}/member/dashboard"
@@ -485,7 +519,16 @@ class ServerScraper:
                 return site_campaign_info
                 
         except Exception as e:
+            error_msg = str(e)
             self.log(f"❌ [{site_name}] Lỗi scrape: {e}")
+            
+            # Nếu là lỗi timeout hoặc login liên quan, dọn dẹp cache và thử lại
+            if retry_count < 1 and ('timeout' in error_msg.lower() or 'login' in error_msg.lower() or 'element' in error_msg.lower()):
+                self.log(f"🔄 [{site_name}] Phát hiện lỗi timeout/login, dọn dẹp cache và thử lại...")
+                self.clear_cookies_cache()
+                time.sleep(2)
+                return self.scrape_site(url, username, password, site_name, retry_count + 1)
+            
             return []
     
     def scrape_once(self):
@@ -495,10 +538,10 @@ class ServerScraper:
         self.site2_campaign_info = []
         
         # Scrape site 1
-        self.site1_campaign_info = self.scrape_site(self.url1, self.username1, self.password1, "Site1")
+        self.site1_campaign_info = self.scrape_site(self.url1, self.username1, self.password1, "Site1", retry_count=0)
         
         # Scrape site 2
-        self.site2_campaign_info = self.scrape_site(self.url2, self.username2, self.password2, "Site2")
+        self.site2_campaign_info = self.scrape_site(self.url2, self.username2, self.password2, "Site2", retry_count=0)
         
         # Trả về kết quả dummy để tương thích với code cũ
         return "dummy_content", "dummy_content_full"
