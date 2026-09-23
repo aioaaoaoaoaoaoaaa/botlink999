@@ -11,6 +11,9 @@ import json
 import re
 import random
 import requests
+import shutil
+import tempfile
+import glob
 from playwright.sync_api import sync_playwright
 from urllib.parse import urlparse
 from dotenv import load_dotenv
@@ -230,30 +233,75 @@ class ServerScraper:
             return False
     
     def clear_cookies_cache(self):
-        """Xóa toàn bộ cache cookies và credentials khi gặp lỗi (KHÔNG xóa telegram state)"""
+        """Xóa toàn bộ cache cookies, credentials, output files và Playwright temp files (KHÔNG xóa telegram state)"""
         try:
-            # Xóa tất cả cookie files
+            # Xóa toàn bộ thư mục saved_cookies/
             if os.path.exists(self.cookies_dir):
-                for filename in os.listdir(self.cookies_dir):
-                    file_path = os.path.join(self.cookies_dir, filename)
-                    try:
-                        if os.path.isfile(file_path):
-                            os.remove(file_path)
-                            self.log(f"🗑️  Đã xóa cookie file: {filename}")
-                    except Exception as e:
-                        self.log(f"⚠️  Không thể xóa {filename}: {e}")
+                shutil.rmtree(self.cookies_dir)
+                self.log(f"🗑️  Đã xóa toàn bộ thư mục: {self.cookies_dir}")
+                # Tạo lại thư mục rỗng
+                os.makedirs(self.cookies_dir)
+                self.log(f"✅ Đã tạo lại thư mục rỗng: {self.cookies_dir}")
             
             # Xóa credentials file
             if os.path.exists(self.credentials_file):
                 os.remove(self.credentials_file)
                 self.log(f"🗑️  Đã xóa credentials file")
             
+            # Xóa server_output.txt
+            output_file = "server_output.txt"
+            if os.path.exists(output_file):
+                os.remove(output_file)
+                self.log(f"🗑️  Đã xóa {output_file}")
+            
+            # Xóa Playwright temporary files
+            playwright_temp_dirs = [
+                os.path.join(tempfile.gettempdir(), 'playwright-*'),
+                os.path.join(tempfile.gettempdir(), 'ms-playwright-*'),
+            ]
+            
+            for temp_pattern in playwright_temp_dirs:
+                matching_dirs = glob.glob(temp_pattern)
+                for temp_dir in matching_dirs:
+                    try:
+                        if os.path.exists(temp_dir):
+                            shutil.rmtree(temp_dir)
+                            self.log(f"🗑️  Đã xóa Playwright temp: {temp_dir}")
+                    except Exception as e:
+                        self.log(f"⚠️  Không thể xóa {temp_dir}: {e}")
+            
             # KHÔNG xóa telegram_state_file để giữ lại message_id
             
-            self.log("✅ Đã dọn dẹp toàn bộ cache cookies và credentials (giữ lại telegram state)")
+            self.log("✅ Đã dọn dẹp toàn bộ cache (cookies, credentials, output, playwright temp) - giữ lại telegram state")
             return True
         except Exception as e:
             self.log(f"❌ Lỗi khi dọn dẹp cache: {e}")
+            return False
+    
+    def reset_scraper_state(self):
+        """Reset hoàn toàn trạng thái của scraper, chỉ giữ lại telegram chat ID"""
+        try:
+            self.log("🔄 Bắt đầu reset hoàn toàn trạng thái scraper...")
+            
+            # Dọn dẹp cache
+            self.clear_cookies_cache()
+            
+            # Reset campaign info
+            self.site1_campaign_info = []
+            self.site2_campaign_info = []
+            self.log("🗑️  Đã reset campaign info")
+            
+            # Giữ lại telegram_chat_id và telegram_bot_token từ environment
+            # Chỉ reset message_id trong state
+            if self.last_telegram_message_id:
+                self.log(f"🗑️  Đã reset telegram message_id (giữ lại chat_id: {self.telegram_chat_id})")
+                self.last_telegram_message_id = None
+                # Không xóa telegram_state_file để giữ lại cấu hình
+            
+            self.log("✅ Đã reset hoàn toàn trạng thái scraper (chỉ giữ lại telegram chat ID)")
+            return True
+        except Exception as e:
+            self.log(f"❌ Lỗi khi reset trạng thái: {e}")
             return False
     
     def simulate_mouse_movement(self, page):
@@ -374,7 +422,7 @@ class ServerScraper:
             self.log(f"❌ Lỗi đăng nhập: {e}")
             return False
     
-    def scrape_site(self, url, username, password, site_name, retry_count=0):
+    def scrape_site(self, url, username, password, site_name, retry_count=0, max_retries=3):
         """Scrape một site cụ thể và trả về campaign info"""
         site_campaign_info = []
         
@@ -448,14 +496,14 @@ class ServerScraper:
                             context.close()
                             browser.close()
                             
-                            # Nếu login thất bại và chưa retry, dọn dẹp cache và thử lại
-                            if retry_count < 1:
-                                self.log(f"🔄 [{site_name}] Dọn dẹp cache và thử lại từ đầu...")
+                            # Nếu login thất bại và chưa retry hết, dọn dẹp cache và thử lại
+                            if retry_count < max_retries:
+                                self.log(f"🔄 [{site_name}] Dọn dẹp cache và thử lại từ đầu (retry {retry_count + 1}/{max_retries})...")
                                 self.clear_cookies_cache()
                                 time.sleep(2)
-                                return self.scrape_site(url, username, password, site_name, retry_count + 1)
+                                return self.scrape_site(url, username, password, site_name, retry_count + 1, max_retries)
                             else:
-                                self.log(f"❌ [{site_name}] Đã thử lại 1 lần nhưng vẫn thất bại")
+                                self.log(f"❌ [{site_name}] Đã thử lại {max_retries} lần nhưng vẫn thất bại")
                                 return []
                 
                 # Luôn chuyển sang dashboard (dù có login hay không)
@@ -563,11 +611,11 @@ class ServerScraper:
             self.log(f"❌ [{site_name}] Lỗi scrape: {e}")
             
             # Nếu là lỗi timeout hoặc login liên quan, dọn dẹp cache và thử lại
-            if retry_count < 1 and ('timeout' in error_msg.lower() or 'login' in error_msg.lower() or 'element' in error_msg.lower()):
-                self.log(f"🔄 [{site_name}] Phát hiện lỗi timeout/login, dọn dẹp cache và thử lại...")
+            if retry_count < max_retries and ('timeout' in error_msg.lower() or 'login' in error_msg.lower() or 'element' in error_msg.lower()):
+                self.log(f"🔄 [{site_name}] Phát hiện lỗi timeout/login, dọn dẹp cache và thử lại (retry {retry_count + 1}/{max_retries})...")
                 self.clear_cookies_cache()
                 time.sleep(2)
-                return self.scrape_site(url, username, password, site_name, retry_count + 1)
+                return self.scrape_site(url, username, password, site_name, retry_count + 1, max_retries)
             
             return []
     
@@ -681,4 +729,14 @@ class ServerScraper:
 
 if __name__ == "__main__":
     scraper = ServerScraper()
+    
+    # Kiểm tra xem có yêu cầu reset trạng thái không
+    if len(sys.argv) > 1 and sys.argv[1] == '--reset':
+        scraper.log("🔄 Chế độ reset trạng thái scraper...")
+        if scraper.reset_scraper_state():
+            scraper.log("✅ Reset trạng thái thành công!")
+        else:
+            scraper.log("❌ Reset trạng thái thất bại!")
+        sys.exit(0)
+    
     scraper.run()
