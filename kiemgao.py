@@ -48,6 +48,7 @@ class ServerScraper:
         
         self.credentials_file = 'saved_credentials.json'
         self.cookies_dir = 'saved_cookies'
+        self.telegram_state_file = 'telegram_state.json'
         
         self.user_agents = [
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -59,11 +60,47 @@ class ServerScraper:
         # Tạo thư mục cookies
         if not os.path.exists(self.cookies_dir):
             os.makedirs(self.cookies_dir)
+        
+        # Load telegram state từ file
+        self.load_telegram_state()
     
     def log(self, message, end='\n'):
         """Log với timestamp"""
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         print(f"[{timestamp}] {message}", end=end)
+    
+    def save_telegram_state(self):
+        """Lưu trạng thái Telegram (message_id) vào file"""
+        try:
+            state = {
+                'last_message_id': self.last_telegram_message_id,
+                'saved_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            with open(self.telegram_state_file, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2, ensure_ascii=False)
+            
+            return True
+        except Exception as e:
+            self.log(f"❌ Lỗi khi lưu telegram state: {e}")
+            return False
+    
+    def load_telegram_state(self):
+        """Tải trạng thái Telegram từ file"""
+        try:
+            if not os.path.exists(self.telegram_state_file):
+                return False
+            
+            with open(self.telegram_state_file, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            
+            if 'last_message_id' in state:
+                self.last_telegram_message_id = state['last_message_id']
+                self.log(f"✅ Đã tải telegram state: message_id = {self.last_telegram_message_id}")
+            return True
+        except Exception as e:
+            self.log(f"❌ Lỗi khi tải telegram state: {e}")
+            return False
     
     def delete_telegram_message(self, message_id):
         """Xóa tin nhắn Telegram theo ID"""
@@ -110,6 +147,7 @@ class ServerScraper:
                 result = response.json()
                 # Lưu message_id để xóa lần sau
                 self.last_telegram_message_id = result['result']['message_id']
+                self.save_telegram_state()  # Lưu vào file
                 self.log("✅ Đã gửi tin nhắn Telegram")
                 return True
             else:
@@ -192,7 +230,7 @@ class ServerScraper:
             return False
     
     def clear_cookies_cache(self):
-        """Xóa toàn bộ cache cookies và credentials khi gặp lỗi"""
+        """Xóa toàn bộ cache cookies và credentials khi gặp lỗi (KHÔNG xóa telegram state)"""
         try:
             # Xóa tất cả cookie files
             if os.path.exists(self.cookies_dir):
@@ -210,7 +248,9 @@ class ServerScraper:
                 os.remove(self.credentials_file)
                 self.log(f"🗑️  Đã xóa credentials file")
             
-            self.log("✅ Đã dọn dẹp toàn bộ cache cookies và credentials")
+            # KHÔNG xóa telegram_state_file để giữ lại message_id
+            
+            self.log("✅ Đã dọn dẹp toàn bộ cache cookies và credentials (giữ lại telegram state)")
             return True
         except Exception as e:
             self.log(f"❌ Lỗi khi dọn dẹp cache: {e}")
