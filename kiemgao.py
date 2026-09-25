@@ -261,14 +261,16 @@ class ServerScraper:
             ]
             
             for temp_pattern in playwright_temp_dirs:
-                matching_dirs = glob.glob(temp_pattern)
-                for temp_dir in matching_dirs:
+                matching_paths = glob.glob(temp_pattern)
+                for temp_path in matching_paths:
+                    # Chỉ xóa thư mục, bỏ qua các file lẻ (vd: .whl cache) trùng pattern
+                    if not os.path.isdir(temp_path):
+                        continue
                     try:
-                        if os.path.exists(temp_dir):
-                            shutil.rmtree(temp_dir)
-                            self.log(f"🗑️  Đã xóa Playwright temp: {temp_dir}")
+                        shutil.rmtree(temp_path)
+                        self.log(f"🗑️  Đã xóa Playwright temp: {temp_path}")
                     except Exception as e:
-                        self.log(f"⚠️  Không thể xóa {temp_dir}: {e}")
+                        self.log(f"⚠️  Không thể xóa {temp_path}: {e}")
             
             # KHÔNG xóa telegram_state_file để giữ lại message_id
             
@@ -509,7 +511,13 @@ class ServerScraper:
                 # Luôn chuyển sang dashboard (dù có login hay không)
                 dashboard_url = f"https://{domain}/member/dashboard"
                 self.log(f"🌐 [{site_name}] Đang chuyển sang dashboard: {dashboard_url}")
-                page.goto(dashboard_url, wait_until='domcontentloaded', timeout=60000)
+                try:
+                    page.goto(dashboard_url, wait_until='domcontentloaded', timeout=90000)
+                except Exception as goto_err:
+                    # Mạng/server chậm thoáng qua: thử lại 1 lần trước khi coi là lỗi thật sự
+                    self.log(f"⚠️ [{site_name}] Timeout khi vào dashboard, thử lại lần nữa: {goto_err}")
+                    time.sleep(3)
+                    page.goto(dashboard_url, wait_until='domcontentloaded', timeout=90000)
                 time.sleep(random.uniform(2, 5))
                 
                 # Kiểm tra xem đã vào dashboard thành công chưa
