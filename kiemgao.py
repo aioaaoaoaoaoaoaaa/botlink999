@@ -42,6 +42,9 @@ class ServerScraper:
             self.refresh_interval = int(os.getenv('SCRAPER_REFRESH_MINUTES', '2')) * 60  # phút -> giây
         self.headless = os.getenv('SCRAPER_HEADLESS', 'true').lower() == 'true'
         
+        # Auto cleanup on startup (mặc định true cho Railway)
+        self.cleanup_on_startup = os.getenv('CLEANUP_ON_STARTUP', 'true').lower() == 'true'
+        
         # Telegram config
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
@@ -64,6 +67,11 @@ class ServerScraper:
         if not os.path.exists(self.cookies_dir):
             os.makedirs(self.cookies_dir)
         
+        # Auto cleanup on startup để xóa sạch cache từ phiên deploy cũ
+        if self.cleanup_on_startup:
+            self.log("🧹 Auto cleanup on startup: Đang dọn dẹp cache từ phiên deploy cũ...")
+            self.cleanup_on_startup_safe()
+        
         # Load telegram state từ file
         self.load_telegram_state()
     
@@ -73,9 +81,11 @@ class ServerScraper:
         print(f"[{timestamp}] {message}", end=end)
     
     def save_telegram_state(self):
-        """Lưu trạng thái Telegram (message_id) vào file"""
+        """Lưu trạng thái Telegram (chat_id, message_id) vào file"""
         try:
             state = {
+                'chat_id': self.telegram_chat_id,
+                'bot_token': self.telegram_bot_token,
                 'last_message_id': self.last_telegram_message_id,
                 'saved_at': time.strftime('%Y-%m-%d %H:%M:%S')
             }
@@ -89,7 +99,7 @@ class ServerScraper:
             return False
     
     def load_telegram_state(self):
-        """Tải trạng thái Telegram từ file"""
+        """Tải trạng thái Telegram từ file (chat_id, bot_token, message_id)"""
         try:
             if not os.path.exists(self.telegram_state_file):
                 return False
@@ -97,9 +107,15 @@ class ServerScraper:
             with open(self.telegram_state_file, 'r', encoding='utf-8') as f:
                 state = json.load(f)
             
+            # Load chat_id và bot_token từ file (ưu tiên file hơn environment variable)
+            if 'chat_id' in state and state['chat_id']:
+                self.telegram_chat_id = state['chat_id']
+            if 'bot_token' in state and state['bot_token']:
+                self.telegram_bot_token = state['bot_token']
             if 'last_message_id' in state:
                 self.last_telegram_message_id = state['last_message_id']
-                self.log(f"✅ Đã tải telegram state: message_id = {self.last_telegram_message_id}")
+            
+            self.log(f"✅ Đã tải telegram state: chat_id={self.telegram_chat_id}, message_id={self.last_telegram_message_id}")
             return True
         except Exception as e:
             self.log(f"❌ Lỗi khi tải telegram state: {e}")
@@ -278,6 +294,71 @@ class ServerScraper:
             return True
         except Exception as e:
             self.log(f"❌ Lỗi khi dọn dẹp cache: {e}")
+            return False
+    
+    def cleanup_on_startup_safe(self):
+        """Dọn dẹp toàn bộ cache từ phiên deploy cũ, chỉ giữ lại telegram state (chat_id và message_id)"""
+        try:
+            self.log("🧹 Bắt đầu cleanup startup: Xóa toàn bộ cache cũ, chỉ giữ telegram state...")
+            
+            # Backup telegram state trước khi cleanup
+            telegram_backup = None
+            if os.path.exists(self.telegram_state_file):
+                try:
+                    with open(self.telegram_state_file, 'r', encoding='utf-8') as f:
+                        telegram_backup = json.load(f)
+                    self.log(f"💾 Đã backup telegram state: chat_id={telegram_backup.get('chat_id', 'N/A')}, message_id={telegram_backup.get('last_message_id', 'N/A')}")
+                except Exception as e:
+                    self.log(f"⚠️  Không thể backup telegram state: {e}")
+            
+            # Xóa toàn bộ thư mục saved_cookies/
+            if os.path.exists(self.cookies_dir):
+                shutil.rmtree(self.cookies_dir)
+                self.log(f"🗑️  [Startup] Đã xóa thư mục cookies cũ: {self.cookies_dir}")
+                os.makedirs(self.cookies_dir)
+                self.log(f"✅ [Startup] Đã tạo lại thư mục cookies rỗng")
+            
+            # Xóa credentials file
+            if os.path.exists(self.credentials_file):
+                os.remove(self.credentials_file)
+                self.log(f"🗑️  [Startup] Đã xóa credentials cũ")
+            
+            # Xóa server_output.txt
+            output_file = "server_output.txt"
+            if os.path.exists(output_file):
+                os.remove(output_file)
+                self.log(f"🗑️  [Startup] Đã xóa output file cũ")
+            
+            # Xóa Playwright temporary files
+            playwright_temp_dirs = [
+                os.path.join(tempfile.gettempdir(), 'playwright-*'),
+                os.path.join(tempfile.gettempdir(), 'ms-playwright-*'),
+            ]
+            
+            for temp_pattern in playwright_temp_dirs:
+                matching_paths = glob.glob(temp_pattern)
+                for temp_path in matching_paths:
+                    if not os.path.isdir(temp_path):
+                        continue
+                    try:
+                        shutil.rmtree(temp_path)
+                        self.log(f"🗑️  [Startup] Đã xóa Playwright temp: {temp_path}")
+                    except Exception as e:
+                        self.log(f"⚠️  [Startup] Không thể xóa {temp_path}: {e}")
+            
+            # Khôi phục telegram state (nếu có backup)
+            if telegram_backup:
+                try:
+                    with open(self.telegram_state_file, 'w', encoding='utf-8') as f:
+                        json.dump(telegram_backup, f, indent=2, ensure_ascii=False)
+                    self.log(f"✅ [Startup] Đã khôi phục telegram state (giữ lại chat_id và message_id)")
+                except Exception as e:
+                    self.log(f"⚠️  Không thể khôi phục telegram state: {e}")
+            
+            self.log("✅ [Startup] Đã dọn dẹp hoàn toàn cache cũ - chỉ giữ lại telegram state")
+            return True
+        except Exception as e:
+            self.log(f"❌ [Startup] Lỗi khi cleanup: {e}")
             return False
     
     def reset_scraper_state(self):
@@ -651,6 +732,7 @@ class ServerScraper:
         self.log(f"👤 Username 1: {self.username1 if self.username1 else 'Không có'}")
         self.log(f"👤 Username 2: {self.username2 if self.username2 else 'Không có'}")
         self.log(f"🖥️  Headless: {self.headless}")
+        self.log(f"🧹 Auto cleanup on startup: {self.cleanup_on_startup}")
         self.log("="*60)
         
         # Lưu credentials từ environment
@@ -661,6 +743,9 @@ class ServerScraper:
         if self.username2 and self.password2:
             domain2 = urlparse(self.url2).netloc
             self.save_credentials(domain2, self.username2, self.password2)
+        
+        # Lưu telegram state (chat_id, bot_token) vào file để lần deploy sau khôi phục
+        self.save_telegram_state()
         
         iteration = 0
         
