@@ -39,6 +39,9 @@ class ServerScraper:
         # Auto cleanup on startup (mặc định true cho Railway)
         self.cleanup_on_startup = os.getenv('CLEANUP_ON_STARTUP', 'true').lower() == 'true'
         
+        # Số lần chạy trước khi reset cache
+        self.reset_after_iterations = 30
+        
         # Telegram config
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
@@ -719,6 +722,7 @@ class ServerScraper:
         self.log(f"👤 Username: {self.username1 if self.username1 else 'Không có'}")
         self.log(f"🖥️  Headless: {self.headless}")
         self.log(f"🧹 Auto cleanup on startup: {self.cleanup_on_startup}")
+        self.log(f"🔄 Reset cache định kỳ sau: {self.reset_after_iterations} lần")
         self.log("="*60)
         
         # Lưu credentials từ environment
@@ -734,6 +738,12 @@ class ServerScraper:
         try:
             while True:
                 iteration += 1
+                
+                # Reset định kỳ để tránh lỗi đăng nhập
+                if iteration > 1 and (iteration - 1) % self.reset_after_iterations == 0:
+                    self.log(f"\n🔄 Đạt mốc {self.reset_after_iterations} lần quét, tiến hành reset cache định kỳ để chống lỗi...")
+                    self.cleanup_on_startup_safe()
+                    
                 self.log(f"\n{'='*60}")
                 self.log(f"🔄 Lần #{iteration}")
                 self.log(f"{'='*60}")
