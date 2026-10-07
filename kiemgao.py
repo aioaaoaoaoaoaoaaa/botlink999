@@ -1,6 +1,7 @@
 """
-Web Scraper Server
+Web Scraper Server - Multi-site version
 Chạy auto-refresh 24/7 với thông tin từ environment variables
+Hỗ trợ nhiều site cùng lúc
 """
 
 import os
@@ -28,6 +29,11 @@ class ServerScraper:
         self.username1 = os.getenv('SCRAPER_USERNAME', 'donam962004@gmail.com')
         self.password1 = os.getenv('SCRAPER_PASSWORD', 'nam523181')
         
+        # Cấu hình cho site 2 (links999.vip)
+        self.url2 = os.getenv('SCRAPER_URL2', 'https://links999.vip/auth/signin')
+        self.username2 = os.getenv('SCRAPER_USERNAME2', 'donam962004@gmail.com')
+        self.password2 = os.getenv('SCRAPER_PASSWORD2', 'nam523181')
+        
         # Ưu tiên REFRESH_INTERVAL (giây), nếu không có thì dùng SCRAPER_REFRESH_MINUTES (phút)
         refresh_interval_env = os.getenv('REFRESH_INTERVAL')
         if refresh_interval_env:
@@ -47,6 +53,7 @@ class ServerScraper:
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
         self.last_telegram_message_id = None  # Lưu ID tin nhắn cuối cùng để xóa
         self.site1_campaign_info = []  # Lưu thông tin campaign cho site 1
+        self.site2_campaign_info = []  # Lưu thông tin campaign cho site 2
         
         self.credentials_file = 'saved_credentials.json'
         self.cookies_dir = 'saved_cookies'
@@ -367,6 +374,7 @@ class ServerScraper:
             
             # Reset campaign info
             self.site1_campaign_info = []
+            self.site2_campaign_info = []
             self.log("🗑️  Đã reset campaign info")
             
             # Giữ lại telegram_chat_id và telegram_bot_token từ environment
@@ -704,22 +712,28 @@ class ServerScraper:
             return []
     
     def scrape_once(self):
-        """Scrape site một lần"""
+        """Scrape cả 2 site một lần"""
         # Reset campaign info
         self.site1_campaign_info = []
+        self.site2_campaign_info = []
         
         # Scrape site 1
         self.site1_campaign_info = self.scrape_site(self.url1, self.username1, self.password1, "Site1", retry_count=0)
+        
+        # Scrape site 2
+        self.site2_campaign_info = self.scrape_site(self.url2, self.username2, self.password2, "Site2", retry_count=0)
         
         # Trả về kết quả dummy để tương thích với code cũ
         return "dummy_content", "dummy_content_full"
     
     def run(self):
         """Chạy auto-refresh liên tục"""
-        self.log("🚀 BẮT ĐẦU SERVER SCRAPER")
-        self.log(f"🌐 Site: {self.url1}")
+        self.log("🚀 BẮT ĐẦU SERVER SCRAPER - MULTI-SITE")
+        self.log(f"🌐 Site 1: {self.url1}")
+        self.log(f"🌐 Site 2: {self.url2}")
         self.log(f"⏱️  Refresh mỗi: {self.refresh_interval//60} phút")
-        self.log(f"👤 Username: {self.username1 if self.username1 else 'Không có'}")
+        self.log(f"👤 Username 1: {self.username1 if self.username1 else 'Không có'}")
+        self.log(f"👤 Username 2: {self.username2 if self.username2 else 'Không có'}")
         self.log(f"🖥️  Headless: {self.headless}")
         self.log(f"🧹 Auto cleanup on startup: {self.cleanup_on_startup}")
         self.log(f"🔄 Reset cache định kỳ sau: {self.reset_after_iterations} lần")
@@ -729,6 +743,10 @@ class ServerScraper:
         if self.username1 and self.password1:
             domain1 = urlparse(self.url1).netloc
             self.save_credentials(domain1, self.username1, self.password1)
+        
+        if self.username2 and self.password2:
+            domain2 = urlparse(self.url2).netloc
+            self.save_credentials(domain2, self.username2, self.password2)
         
         # Lưu telegram state (chat_id, bot_token) vào file để lần deploy sau khôi phục
         self.save_telegram_state()
@@ -759,6 +777,8 @@ class ServerScraper:
                     all_campaign_info = []
                     if self.site1_campaign_info:
                         all_campaign_info.extend(self.site1_campaign_info)
+                    if self.site2_campaign_info:
+                        all_campaign_info.extend(self.site2_campaign_info)
                     
                     with open(output_file, 'w', encoding='utf-8') as f:
                         f.write(f"Lần #{iteration} - {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -775,6 +795,17 @@ class ServerScraper:
                     telegram_message += f"{domain1}:\n"
                     if self.site1_campaign_info:
                         for campaign_line in self.site1_campaign_info:
+                            telegram_message += f"{campaign_line}\n"
+                    else:
+                        telegram_message += "Không có thông tin campaign\n"
+                    
+                    telegram_message += "\n"
+                    
+                    # Site 2
+                    domain2 = urlparse(self.url2).netloc
+                    telegram_message += f"{domain2}:\n"
+                    if self.site2_campaign_info:
+                        for campaign_line in self.site2_campaign_info:
                             telegram_message += f"{campaign_line}\n"
                     else:
                         telegram_message += "Không có thông tin campaign\n"
