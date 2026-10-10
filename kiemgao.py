@@ -29,8 +29,8 @@ class ServerScraper:
         self.username1 = os.getenv('SCRAPER_USERNAME', 'donam962004@gmail.com')
         self.password1 = os.getenv('SCRAPER_PASSWORD', 'nam523181')
         
-        # Cấu hình cho site 2 (links999.vip)
-        self.url2 = os.getenv('SCRAPER_URL2', 'https://links999.vip/auth/signin')
+        # Cấu hình cho site 2 (link999.win)
+        self.url2 = os.getenv('SCRAPER_URL2', 'https://link999.win/auth/signin')
         self.username2 = os.getenv('SCRAPER_USERNAME2', 'donam962004@gmail.com')
         self.password2 = os.getenv('SCRAPER_PASSWORD2', 'nam523181')
         
