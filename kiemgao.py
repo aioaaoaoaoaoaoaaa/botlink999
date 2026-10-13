@@ -633,8 +633,8 @@ class ServerScraper:
                             remaining_codes = success_elem.inner_text()
                             self.log(f"🔢 [{site_name}] Số lượng mã còn: {remaining_codes}")
                             
-                            # Sử dụng JavaScript để tìm tên campaign từ phần tử badge gần nhất
-                            campaign_name = success_elem.evaluate('''
+                            # Sử dụng JavaScript để tìm số camp từ phần tử badge gần nhất
+                            campaign_info = success_elem.evaluate('''
                                 (element) => {
                                     // Tìm phần tử cha chứa div flex
                                     let parent = element.parentElement;
@@ -642,41 +642,37 @@ class ServerScraper:
                                         parent = parent.parentElement;
                                         if (!parent || parent.tagName === 'BODY') return null;
                                     }
-                                    
+
                                     if (!parent) return null;
-                                    
+
                                     // Tìm badge element trong phần tử cha (sibling div)
                                     const flexContainer = parent.parentElement;
                                     if (!flexContainer) return null;
-                                    
+
                                     // Tìm tất cả các badge trong container
                                     const badges = flexContainer.querySelectorAll('.badge');
                                     for (const badge of badges) {
                                         const text = badge.innerText || badge.textContent;
-                                        let name = null;
-                                        if (text.includes('Google 4 Step')) name = 'Octo 4';
-                                        else if (text.includes('Google 2 Step')) name = 'Octo 2';
-                                        else if (text.includes('Google 3 Step')) name = 'Octo 3';
-                                        if (!name) continue;
+                                        if (!text.includes('Google 4 Step')) continue;
 
                                         // Số camp nằm trong <small> cạnh badge: "(38 camp | 35.5%)"
                                         const small = badge.parentElement.querySelector('small');
                                         const m = small ? small.innerText.match(/(\\d[\\d,.]*)\\s*camp/i) : null;
-                                        return {name: name, camps: m ? m[1] : null};
+                                        return {camps: m ? m[1] : null};
                                     }
 
                                     return null;
                                 }
                             ''')
 
-                            if campaign_name:
-                                camps = campaign_name.get('camps')
-                                camp_part = f" - {camps} camp" if camps else ""
-                                campaign_line = f"{campaign_name['name']}{camp_part} - {remaining_codes} mã"
+                            if campaign_info:
+                                camps = campaign_info.get('camps')
+                                camp_part = f"{camps} camp" if camps else "Unknown camp"
+                                campaign_line = f"{camp_part} - {remaining_codes} mã"
                                 print(campaign_line)
                                 site_campaign_info.append(campaign_line)
                             else:
-                                self.log(f"⚠️ [{site_name}] Không tìm thấy tên campaign cho số lượng: {remaining_codes}")
+                                self.log(f"⚠️ [{site_name}] Không tìm thấy thông tin camp cho số lượng: {remaining_codes}")
                             
                         except Exception as e:
                             self.log(f"Lỗi khi đọc campaign element #{idx + 1}: {e}")
