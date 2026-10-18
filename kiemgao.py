@@ -10,6 +10,7 @@ import time
 import json
 import re
 import random
+import threading
 import requests
 import shutil
 import tempfile
@@ -92,6 +93,33 @@ class ServerScraper:
         """Log với timestamp"""
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         print(f"[{timestamp}] {message}", end=end)
+    
+    def _run_in_new_thread(self, func, *args, **kwargs):
+        """
+        Chạy hàm trong thread mới để tránh lỗi 'Playwright Sync API inside asyncio loop'.
+        
+        Playwright Sync API kiểm tra asyncio.get_running_loop() - nếu có event loop
+        đang chạy trong thread hiện tại thì sẽ ném lỗi. Thread mới không có event
+        loop đang chạy nên Playwright hoạt động bình thường.
+        
+        Được dùng khi chạy trên PaaS (Railway, Heroku...) có môi trường asyncio.
+        """
+        result = [None]
+        error = [None]
+        
+        def target():
+            try:
+                result[0] = func(*args, **kwargs)
+            except Exception as e:
+                error[0] = e
+        
+        t = threading.Thread(target=target, daemon=True)
+        t.start()
+        t.join()
+        
+        if error[0]:
+            raise error[0]
+        return result[0]
     
     def save_telegram_state(self):
         """Lưu trạng thái Telegram (chat_id, message_id) vào file"""
@@ -510,7 +538,19 @@ class ServerScraper:
                 # Mouse movement trước khi click
                 self.simulate_mouse_movement(page)
                 time.sleep(random.uniform(0.2, 0.5))
-                submit_button.click()
+                
+                # Sửa lỗi Timeout 30000ms: Playwright click() chờ navigation hoàn tất
+                # nhưng site dùng invisible captcha làm chậm redirect → timeout.
+                # Dùng JavaScript click (evaluate) không chờ navigation → không timeout.
+                try:
+                    submit_button.click(timeout=15000)
+                except Exception as click_err:
+                    self.log(f"⚠️ Click timeout (navigation), dùng JS click thay thế: {click_err}")
+                    try:
+                        submit_button.evaluate("el => el.click()")
+                    except Exception as js_err:
+                        submit_button.dispatch_event('click')
+                
                 return True
             
             return False
@@ -740,11 +780,15 @@ class ServerScraper:
         self.site1_campaign_info = []
         self.site2_campaign_info = []
         
-        # Scrape site 1
-        self.site1_campaign_info = self.scrape_site(self.url1, self.username1, self.password1, "Site1", retry_count=0)
+        # Scrape site 1 - chạy trong thread mới để tránh lỗi 'Sync API inside asyncio loop'
+        self.site1_campaign_info = self._run_in_new_thread(
+            self.scrape_site, self.url1, self.username1, self.password1, "Site1", 0
+        )
         
-        # Scrape site 2
-        self.site2_campaign_info = self.scrape_site(self.url2, self.username2, self.password2, "Site2", retry_count=0)
+        # Scrape site 2 - chạy trong thread mới để tránh lỗi 'Sync API inside asyncio loop'
+        self.site2_campaign_info = self._run_in_new_thread(
+            self.scrape_site, self.url2, self.username2, self.password2, "Site2", 0
+        )
         
         # Xác định thành công nếu ít nhất 1 site có campaign info
         success = bool(self.site1_campaign_info or self.site2_campaign_info)
@@ -869,6 +913,16 @@ class ServerScraper:
 
 
 if __name__ == "__main__":
+    # Kiểm tra conflict asyncio trước khi chạy
+    # Nếu PaaS (Railway/Heroku) chạy script trong asyncio loop, Playwright Sync API
+    # sẽ báo lỗi. Solution: chạy scrape trong thread mới (xem _run_in_new_thread).
+    try:
+        import asyncio
+        asyncio.get_running_loop()
+        print("⚠️  Phát hiện asyncio event loop đang chạy - Playwright sẽ chạy trong thread mới để tránh conflict")
+    except RuntimeError:
+        pass  # Không có event loop đang chạy - bình thường
+    
     scraper = ServerScraper()
     
     # Kiểm tra xem có yêu cầu reset trạng thái không
