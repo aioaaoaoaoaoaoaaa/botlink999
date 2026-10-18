@@ -48,6 +48,16 @@ class ServerScraper:
         # Số lần chạy trước khi reset cache
         self.reset_after_iterations = 5
         
+        # Danh sách pattern lỗi transient để retry + clear cache
+        # Mở rộng so với code cũ (chỉ có timeout/login/element)
+        self.retry_patterns = [
+            'timeout', 'login', 'element',
+            'connection', 'refused', 'reset', 'dns', 'network',
+            'closed', 'crash', 'cdp', 'playwright', 'browser',
+            'err_', 'executable', 'sandbox', 'process',
+            'net::', 'protocol', 'session',
+        ]
+        
         # Telegram config
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID', '')
@@ -511,6 +521,8 @@ class ServerScraper:
     def scrape_site(self, url, username, password, site_name, retry_count=0, max_retries=3):
         """Scrape một site cụ thể và trả về campaign info"""
         site_campaign_info = []
+        browser = None
+        context = None
         
         try:
             with sync_playwright() as p:
@@ -698,17 +710,32 @@ class ServerScraper:
             error_msg = str(e)
             self.log(f"❌ [{site_name}] Lỗi scrape: {e}")
             
-            # Nếu là lỗi timeout hoặc login liên quan, dọn dẹp cache và thử lại
-            if retry_count < max_retries and ('timeout' in error_msg.lower() or 'login' in error_msg.lower() or 'element' in error_msg.lower()):
-                self.log(f"🔄 [{site_name}] Phát hiện lỗi timeout/login, dọn dẹp cache và thử lại (retry {retry_count + 1}/{max_retries})...")
+            # Mở rộng điều kiện retry cho các lỗi transient phổ biến (mạng, browser crash, Playwright...)
+            error_lower = error_msg.lower()
+            matched_patterns = [p for p in self.retry_patterns if p in error_lower]
+            if retry_count < max_retries and matched_patterns:
+                self.log(f"🔄 [{site_name}] Phát hiện lỗi transient (match: {matched_patterns}), dọn dẹp cache và thử lại (retry {retry_count + 1}/{max_retries})...")
                 self.clear_cookies_cache()
                 time.sleep(2)
                 return self.scrape_site(url, username, password, site_name, retry_count + 1, max_retries)
             
             return []
+        finally:
+            # Luôn close context/browser để không leak browser process trên server 24/7
+            # (Nếu đã close ở trong try rồi thì lệnh này sẽ silently fail qua try/except)
+            if context:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if browser:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
     
     def scrape_once(self):
-        """Scrape cả 2 site một lần"""
+        """Scrape cả 2 site một lần, trả về (site1_info, site2_info, success_flag)"""
         # Reset campaign info
         self.site1_campaign_info = []
         self.site2_campaign_info = []
@@ -719,8 +746,9 @@ class ServerScraper:
         # Scrape site 2
         self.site2_campaign_info = self.scrape_site(self.url2, self.username2, self.password2, "Site2", retry_count=0)
         
-        # Trả về kết quả dummy để tương thích với code cũ
-        return "dummy_content", "dummy_content_full"
+        # Xác định thành công nếu ít nhất 1 site có campaign info
+        success = bool(self.site1_campaign_info or self.site2_campaign_info)
+        return self.site1_campaign_info, self.site2_campaign_info, success
     
     def run(self):
         """Chạy auto-refresh liên tục"""
@@ -748,6 +776,7 @@ class ServerScraper:
         self.save_telegram_state()
         
         iteration = 0
+        last_iteration_success = None  # Theo dõi trạng thái iteration trước
         
         try:
             while True:
@@ -757,56 +786,71 @@ class ServerScraper:
                 if iteration > 1 and (iteration - 1) % self.reset_after_iterations == 0:
                     self.log(f"\n🔄 Đạt mốc {self.reset_after_iterations} lần quét, tiến hành reset cache định kỳ để chống lỗi...")
                     self.cleanup_on_startup_safe()
-                    
+                
+                # Nếu iteration trước fail, dọn cache TRƯỚC khi chạy lần này
+                if last_iteration_success is False:
+                    self.log(f"🧹 Iteration trước fail - dọn cache trước khi chạy {iteration}")
+                    self.clear_cookies_cache()
+                
                 self.log(f"\n{'='*60}")
                 self.log(f"🔄 Lần #{iteration}")
                 self.log(f"{'='*60}")
                 
-                result = self.scrape_once()
-                
-                if result:  # result is now a tuple (text_content, text_content_full)
-                    text_content, text_content_full = result
-                    self.log("✅ Scrape thành công")
+                try:
+                    site1_info, site2_info, success = self.scrape_once()
                     
-                    # Lưu kết quả
-                    output_file = "server_output.txt"
-                    all_campaign_info = []
-                    if self.site1_campaign_info:
-                        all_campaign_info.extend(self.site1_campaign_info)
-                    if self.site2_campaign_info:
-                        all_campaign_info.extend(self.site2_campaign_info)
-                    
-                    with open(output_file, 'w', encoding='utf-8') as f:
-                        f.write(f"Lần #{iteration} - {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                        f.write("="*60 + "\n")
-                        f.write("\n".join(all_campaign_info))
-                    
-                    self.log(f"📄 Đã lưu: {output_file}")
-                    
-                    # Gửi tin nhắn với thông tin campaign theo format rút gọn
-                    telegram_message = ""
-                    
-                    # Site 1
-                    domain1 = urlparse(self.url1).netloc
-                    short_name1 = domain1.split('.')[-1].capitalize()
-                    if self.site1_campaign_info:
-                        for campaign_line in self.site1_campaign_info:
-                            telegram_message += f"{short_name1}: {campaign_line}\n"
+                    if success:
+                        self.log("✅ Scrape thành công")
+                        
+                        # Lưu kết quả
+                        output_file = "server_output.txt"
+                        all_campaign_info = []
+                        if self.site1_campaign_info:
+                            all_campaign_info.extend(self.site1_campaign_info)
+                        if self.site2_campaign_info:
+                            all_campaign_info.extend(self.site2_campaign_info)
+                        
+                        with open(output_file, 'w', encoding='utf-8') as f:
+                            f.write(f"Lần #{iteration} - {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            f.write("="*60 + "\n")
+                            f.write("\n".join(all_campaign_info))
+                        
+                        self.log(f"📄 Đã lưu: {output_file}")
+                        
+                        # Gửi tin nhắn với thông tin campaign theo format rút gọn
+                        telegram_message = ""
+                        
+                        # Site 1
+                        domain1 = urlparse(self.url1).netloc
+                        short_name1 = domain1.split('.')[-1].capitalize()
+                        if self.site1_campaign_info:
+                            for campaign_line in self.site1_campaign_info:
+                                telegram_message += f"{short_name1}: {campaign_line}\n"
+                        else:
+                            telegram_message += f"{short_name1}: -\n"
+                        
+                        # Site 2
+                        domain2 = urlparse(self.url2).netloc
+                        short_name2 = domain2.split('.')[-1].capitalize()
+                        if self.site2_campaign_info:
+                            for campaign_line in self.site2_campaign_info:
+                                telegram_message += f"{short_name2}: {campaign_line}\n"
+                        else:
+                            telegram_message += f"{short_name2}: -\n"
+                        
+                        self.send_telegram_message(telegram_message)
+                        last_iteration_success = True
                     else:
-                        telegram_message += f"{short_name1}: -\n"
-                    
-                    # Site 2
-                    domain2 = urlparse(self.url2).netloc
-                    short_name2 = domain2.split('.')[-1].capitalize()
-                    if self.site2_campaign_info:
-                        for campaign_line in self.site2_campaign_info:
-                            telegram_message += f"{short_name2}: {campaign_line}\n"
-                    else:
-                        telegram_message += f"{short_name2}: -\n"
-                    
-                    self.send_telegram_message(telegram_message)
-                else:
-                    self.log("❌ Scrape thất bại")
+                        self.log("❌ Cả 2 site fail - dọn cache ngay để iteration sau chạy sạch")
+                        self.clear_cookies_cache()
+                        last_iteration_success = False
+                        
+                except Exception as e:
+                    self.log(f"❌ Lỗi bất ngờ trong scrape_once: {e}")
+                    import traceback
+                    self.log(f"Traceback: {traceback.format_exc()}")
+                    self.clear_cookies_cache()
+                    last_iteration_success = False
                 
                 self.log(f"\n⏳ Đợi {self.refresh_interval//60} phút...")
                 
