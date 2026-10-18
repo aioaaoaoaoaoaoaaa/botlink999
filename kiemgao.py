@@ -871,7 +871,7 @@ class ServerScraper:
                             for campaign_line in self.site1_campaign_info:
                                 telegram_message += f"{short_name1}: {campaign_line}\n"
                         else:
-                            telegram_message += f"{short_name1}: -\n"
+                            telegram_message += f"{short_name1}: ❌\n"
                         
                         # Site 2
                         domain2 = urlparse(self.url2).netloc
@@ -880,7 +880,7 @@ class ServerScraper:
                             for campaign_line in self.site2_campaign_info:
                                 telegram_message += f"{short_name2}: {campaign_line}\n"
                         else:
-                            telegram_message += f"{short_name2}: -\n"
+                            telegram_message += f"{short_name2}: ❌\n"
                         
                         self.send_telegram_message(telegram_message)
                         last_iteration_success = True
