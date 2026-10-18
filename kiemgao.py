@@ -46,7 +46,7 @@ class ServerScraper:
         self.cleanup_on_startup = os.getenv('CLEANUP_ON_STARTUP', 'true').lower() == 'true'
         
         # Số lần chạy trước khi reset cache
-        self.reset_after_iterations = 30
+        self.reset_after_iterations = 5
         
         # Telegram config
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
