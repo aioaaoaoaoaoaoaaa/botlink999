@@ -667,8 +667,8 @@ class ServerScraper:
 
                             if campaign_info:
                                 camps = campaign_info.get('camps')
-                                camp_part = f"{camps} camp" if camps else "Unknown camp"
-                                campaign_line = f"{camp_part} - {remaining_codes} mã"
+                                camp_part = camps if camps else "0"
+                                campaign_line = f"{camp_part} - {remaining_codes}"
                                 print(campaign_line)
                                 site_campaign_info.append(campaign_line)
                             else:
@@ -783,28 +783,26 @@ class ServerScraper:
                     
                     self.log(f"📄 Đã lưu: {output_file}")
                     
-                    # Gửi tin nhắn với thông tin campaign theo format mới
+                    # Gửi tin nhắn với thông tin campaign theo format rút gọn
                     telegram_message = ""
                     
                     # Site 1
                     domain1 = urlparse(self.url1).netloc
-                    telegram_message += f"{domain1}:\n"
+                    short_name1 = domain1.split('.')[-1].capitalize()
                     if self.site1_campaign_info:
                         for campaign_line in self.site1_campaign_info:
-                            telegram_message += f"{campaign_line}\n"
+                            telegram_message += f"{short_name1}: {campaign_line}\n"
                     else:
-                        telegram_message += "Không có thông tin campaign\n"
-                    
-                    telegram_message += "\n"
+                        telegram_message += f"{short_name1}: -\n"
                     
                     # Site 2
                     domain2 = urlparse(self.url2).netloc
-                    telegram_message += f"{domain2}:\n"
+                    short_name2 = domain2.split('.')[-1].capitalize()
                     if self.site2_campaign_info:
                         for campaign_line in self.site2_campaign_info:
-                            telegram_message += f"{campaign_line}\n"
+                            telegram_message += f"{short_name2}: {campaign_line}\n"
                     else:
-                        telegram_message += "Không có thông tin campaign\n"
+                        telegram_message += f"{short_name2}: -\n"
                     
                     self.send_telegram_message(telegram_message)
                 else:
