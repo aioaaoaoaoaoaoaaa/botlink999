@@ -17,6 +17,7 @@ import json
 import random
 import signal
 import logging
+import gc
 import threading
 import traceback
 import shutil
@@ -327,15 +328,33 @@ class ServerScraper:
             os.fsync(f.fileno())
         os.replace(tmp_path, path)
 
+    def _release_memory(self):
+        """Thu hồi object Python và trả bớt heap không dùng về hệ điều hành."""
+        gc.collect()
+
+        # Railway thường chạy Linux/glibc; malloc_trim giúp trả các vùng heap
+        # rảnh về container. Không làm gì nếu hệ điều hành/libc không hỗ trợ.
+        if sys.platform.startswith('linux'):
+            try:
+                import ctypes
+                ctypes.CDLL('libc.so.6').malloc_trim(0)
+            except (AttributeError, OSError):
+                pass
+
     def _run_in_new_thread(self, func, *args, timeout=THREAD_JOIN_TIMEOUT, **kwargs):
         """
-        Chạy hàm trong thread mới để tránh lỗi 'Playwright Sync API inside asyncio loop'.
+        Chạy hàm trong thread khi thread hiện tại đang có asyncio loop.
 
-        Playwright Sync API kiểm tra asyncio.get_running_loop(); nếu thread hiện tại
-        có event loop đang chạy thì ném lỗi. Thread mới không có event loop nên OK.
-
-        Có timeout để tránh treo process khi thread con bị hang (PaaS 24/7).
+        Khi chạy trực tiếp bằng ``python kiemgao.py`` (trường hợp Railway phổ biến),
+        không tạo thread mới cho mỗi lần scrape. Việc này tránh tích lũy thread và
+        giảm overhead; Playwright Sync API vẫn chạy bình thường trong main thread.
         """
+        try:
+            import asyncio
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return func(*args, **kwargs)
+
         result = [None]
         error = [None]
 
@@ -1040,6 +1059,8 @@ class ServerScraper:
                     self.clear_cookies_cache()
                     last_iteration_success = False
 
+                # Thu hồi tài nguyên sau cả lượt thành công lẫn thất bại.
+                self._release_memory()
                 if self._stop_event.is_set():
                     break
 
