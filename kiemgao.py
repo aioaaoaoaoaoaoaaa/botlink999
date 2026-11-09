@@ -740,7 +740,7 @@ class ServerScraper:
     # ------------------------------ Core scrape ------------------------------
 
     def _read_campaign_info(self, page, site_name):
-        """Đọc thông tin campaign từ dashboard, trả về list dạng 'N - remaining_codes'."""
+        """Đọc thông tin campaign từ dashboard (Google 4 Step & Social)."""
         results = []
         self.log("=" * 60)
         self.log(f"📊 [{site_name}] TIẾN ĐỘ & PHÂN BỔ SỐ MÃ THEO CAMPAIGN:")
@@ -757,44 +757,67 @@ class ServerScraper:
 
             for idx, success_elem in enumerate(success_elements):
                 try:
-                    remaining_codes = success_elem.inner_text()
+                    remaining_codes = success_elem.inner_text().strip()
                     self.log(f"🔢 [{site_name}] #{idx + 1} - Số lượng mã còn: {remaining_codes}")
 
                     campaign_info = success_elem.evaluate('''
                         (element) => {
                             let parent = element.parentElement;
-                            while (parent && !parent.style.display?.includes('flex')) {
+                            while (parent && parent.tagName !== 'BODY') {
+                                const disp = parent.style?.display || (window.getComputedStyle ? window.getComputedStyle(parent).display : '');
+                                if (disp && disp.includes('flex')) break;
                                 parent = parent.parentElement;
-                                if (!parent || parent.tagName === 'BODY') return null;
                             }
-                            if (!parent) return null;
+                            if (!parent || parent.tagName === 'BODY') return null;
 
-                            const flexContainer = parent.parentElement;
-                            if (!flexContainer) return null;
-
+                            const flexContainer = parent.parentElement || parent;
                             const badges = flexContainer.querySelectorAll('.badge');
                             for (const badge of badges) {
-                                const text = badge.innerText || badge.textContent;
-                                if (!text.includes('Google 4 Step')) continue;
+                                const text = (badge.innerText || badge.textContent || '').trim();
+                                let campType = null;
+                                if (text.toLowerCase().includes('google 4 step')) {
+                                    campType = 'Google';
+                                } else if (/soci(c)?al/i.test(text)) {
+                                    campType = 'Social';
+                                }
+                                if (!campType) continue;
 
-                                const small = badge.parentElement.querySelector('small');
-                                const m = small ? small.innerText.match(/(\\d[\\d,.]*)\\s*camp/i) : null;
-                                return {camps: m ? m[1] : null};
+                                let small = badge.parentElement ? badge.parentElement.querySelector('small') : null;
+                                if (!small) {
+                                    small = parent.querySelector('small');
+                                }
+                                const smallText = small ? (small.innerText || small.textContent || '') : '';
+                                const m = smallText.match(/(\\d[\\d,.]*)\\s*camp/i);
+                                return {
+                                    type: campType,
+                                    camps: m ? m[1] : null
+                                };
                             }
                             return null;
                         }
                     ''')
 
                     if campaign_info:
+                        camp_type = campaign_info.get('type') or "Unknown"
                         camps = campaign_info.get('camps') or "0"
-                        campaign_line = f"{camps} - {remaining_codes}"
+                        campaign_line = f"({camp_type}) {camps} - {remaining_codes}"
                         print(campaign_line)
-                        results.append(campaign_line)
+                        self.log(f"   🎯 [{site_name}] {camp_type}: {camps} camp | {remaining_codes} mã")
+                        results.append({
+                            'site': site_name,
+                            'type': camp_type,
+                            'camps': camps,
+                            'remaining': remaining_codes
+                        })
                     else:
-                        self.log(f"⚠️ [{site_name}] Không tìm thấy thông tin camp cho: {remaining_codes}")
+                        self.log(f"ℹ️ [{site_name}] Bỏ qua element #{idx + 1} (không phải Google 4 Step hoặc Social)")
                 except Exception as e:  # noqa: BLE001
                     self.log(f"Lỗi khi đọc campaign element #{idx + 1}: {e}")
                     continue
+
+            # Sắp xếp để Google luôn đứng trước Social nếu cả 2 cùng xuất hiện
+            order_map = {'Google': 0, 'Social': 1}
+            results.sort(key=lambda x: order_map.get(x.get('type'), 99))
 
         except Exception as e:  # noqa: BLE001
             self.log(f"Lỗi khi đọc campaign info: {e}")
@@ -947,10 +970,22 @@ class ServerScraper:
             if os.path.exists(OUTPUT_FILE) and os.path.getsize(OUTPUT_FILE) > OUTPUT_MAX_BYTES:
                 self.log(f"⚠️  {OUTPUT_FILE} vượt {OUTPUT_MAX_BYTES} bytes - truncate")
 
+            lines = []
+            for item in all_campaign_info:
+                if isinstance(item, dict):
+                    site_name = item.get('site', '')
+                    camp_type = item.get('type', 'Campaign')
+                    camps = item.get('camps', '0')
+                    remaining = item.get('remaining', '0')
+                    prefix = f"[{site_name}] " if site_name else ""
+                    lines.append(f"{prefix}({camp_type}): {camps} - {remaining}")
+                else:
+                    lines.append(str(item))
+
             with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
                 f.write(f"Lần #{iteration} - {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write("=" * 60 + "\n")
-                f.write("\n".join(all_campaign_info))
+                f.write("\n".join(lines) + "\n")
             self.log(f"📄 Đã lưu: {OUTPUT_FILE}")
         except Exception as e:  # noqa: BLE001
             self.log(f"❌ Lỗi ghi {OUTPUT_FILE}: {e}")
@@ -959,20 +994,34 @@ class ServerScraper:
         """Tạo nội dung tin nhắn Telegram rút gọn cho cả 2 site."""
         telegram_message = ""
 
+        # Site 1
         domain1 = urlparse(self.url1).netloc
         short_name1 = domain1.split('.')[-1].capitalize()
         if self.site1_campaign_info:
-            for campaign_line in self.site1_campaign_info:
-                telegram_message += f"{short_name1}: {campaign_line}\n"
+            for item in self.site1_campaign_info:
+                if isinstance(item, dict):
+                    camp_type = item.get('type', 'Campaign')
+                    camps = item.get('camps', '0')
+                    remaining = item.get('remaining', '0')
+                    telegram_message += f"{short_name1} ({camp_type}): {camps} - {remaining}\n"
+                else:
+                    telegram_message += f"{short_name1}: {item}\n"
         else:
             telegram_message += f"{short_name1}: ❌\n"
 
+        # Site 2
         if self.username2 and self.password2:
             domain2 = urlparse(self.url2).netloc
             short_name2 = domain2.split('.')[-1].capitalize()
             if self.site2_campaign_info:
-                for campaign_line in self.site2_campaign_info:
-                    telegram_message += f"{short_name2}: {campaign_line}\n"
+                for item in self.site2_campaign_info:
+                    if isinstance(item, dict):
+                        camp_type = item.get('type', 'Campaign')
+                        camps = item.get('camps', '0')
+                        remaining = item.get('remaining', '0')
+                        telegram_message += f"{short_name2} ({camp_type}): {camps} - {remaining}\n"
+                    else:
+                        telegram_message += f"{short_name2}: {item}\n"
             else:
                 telegram_message += f"{short_name2}: ❌\n"
 
