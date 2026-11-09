@@ -988,9 +988,7 @@ class ServerScraper:
             self.log(f"❌ Lỗi ghi {OUTPUT_FILE}: {e}")
 
     def _build_telegram_message(self):
-        """Tạo nội dung tin nhắn Telegram rút gọn cho cả 2 site (ưu tiên Win lên trước)."""
-        telegram_message = ""
-
+        """Tạo nội dung tin nhắn Telegram rút gọn cho cả 2 site (ưu tiên Win lên trước, căn lề gọn gàng)."""
         site_entries = []
 
         # Site 2 (Win)
@@ -1007,29 +1005,52 @@ class ServerScraper:
         # Đảm bảo site Win luôn đứng trước App
         site_entries.sort(key=lambda s: 0 if 'win' in s[0].lower() else 1)
 
+        # Trích xuất dữ liệu để tính khoảng cách tối ưu (gọn gàng, không bị cách xa)
+        parsed_sites = []
         for short_name, camp_info_list in site_entries:
-            if camp_info_list:
-                step4_code = "0"
-                social_code = "0"
-                has_dict = False
+            step4_code = "0"
+            social_code = "0"
+            has_dict = False
 
+            if camp_info_list:
                 for item in camp_info_list:
                     if isinstance(item, dict):
                         has_dict = True
                         c_type = item.get('type')
                         if c_type == 'Google':
-                            step4_code = item.get('remaining', '0')
+                            step4_code = str(item.get('remaining', '0')).strip()
                         elif c_type == 'Social':
-                            social_code = item.get('remaining', '0')
+                            social_code = str(item.get('remaining', '0')).strip()
 
-                if has_dict:
-                    telegram_message += f"{short_name}: {step4_code} step4 - {social_code} social\n"
+            parsed_sites.append({
+                'name': short_name,
+                'camp_info_list': camp_info_list,
+                'has_dict': has_dict,
+                'step4': step4_code,
+                'social': social_code
+            })
+
+        valid_dicts = [p for p in parsed_sites if p['has_dict']]
+        max_s4 = max([len(p['step4']) for p in valid_dicts] or [2])
+        max_sc = max([len(p['social']) for p in valid_dicts] or [2])
+        max_s4 = max(max_s4, 2)
+        max_sc = max(max_sc, 2)
+
+        lines = []
+        for p in parsed_sites:
+            if p['camp_info_list']:
+                if p['has_dict']:
+                    s4_part = f"{p['step4']:>{max_s4}} step4"
+                    sc_part = f"{p['social']:>{max_sc}} social"
+                    lines.append(f"{p['name']}: {s4_part} - {sc_part}")
                 else:
-                    telegram_message += f"{short_name}: " + " - ".join(str(x) for x in camp_info_list) + "\n"
+                    lines.append(f"{p['name']}: " + " - ".join(str(x) for x in p['camp_info_list']))
             else:
-                telegram_message += f"{short_name}: ❌\n"
+                lines.append(f"{p['name']}: ❌")
 
-        return telegram_message
+        raw_text = "\n".join(lines)
+        # Thẻ <pre> giúp Telegram hiển thị font monospace (căn thẳng hàng tuyệt đối trên mọi thiết bị)
+        return f"<pre>{raw_text}</pre>"
 
     def _countdown(self):
         """Đếm ngược tới lần scrape tiếp theo, có thể ngắt bằng stop event."""
