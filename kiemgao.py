@@ -799,14 +799,12 @@ class ServerScraper:
 
                     if campaign_info:
                         camp_type = campaign_info.get('type') or "Unknown"
-                        camps = campaign_info.get('camps') or "0"
-                        campaign_line = f"({camp_type}) {camps} - {remaining_codes}"
+                        campaign_line = f"({camp_type}) {remaining_codes}"
                         print(campaign_line)
-                        self.log(f"   🎯 [{site_name}] {camp_type}: {camps} camp | {remaining_codes} mã")
+                        self.log(f"   🎯 [{site_name}] {camp_type}: {remaining_codes} mã")
                         results.append({
                             'site': site_name,
                             'type': camp_type,
-                            'camps': camps,
                             'remaining': remaining_codes
                         })
                     else:
@@ -944,22 +942,22 @@ class ServerScraper:
     # ------------------------------ Iteration / run loop ------------------------------
 
     def scrape_once(self):
-        """Scrape cả 2 site một lần, trả về (site1_info, site2_info, success_flag)."""
+        """Scrape cả 2 site một lần (ưu tiên Win lên trước)."""
         self.site1_campaign_info = []
         self.site2_campaign_info = []
 
-        # Mỗi site chạy trong thread mới để tránh lỗi 'Sync API inside asyncio loop'
-        self.site1_campaign_info = self._run_in_new_thread(
-            self.scrape_site, self.url1, self.username1, self.password1, "Site1", 0
-        )
-
-        # Chỉ scrape site 2 nếu có đủ credentials
+        # Cào Site 2 (Win) trước nếu có cấu hình
         if self.username2 and self.password2:
             self.site2_campaign_info = self._run_in_new_thread(
                 self.scrape_site, self.url2, self.username2, self.password2, "Site2", 0
             )
         else:
             self.log("ℹ️  Bỏ qua Site2 (thiếu credentials)")
+
+        # Cào Site 1 (App)
+        self.site1_campaign_info = self._run_in_new_thread(
+            self.scrape_site, self.url1, self.username1, self.password1, "Site1", 0
+        )
 
         success = bool(self.site1_campaign_info or self.site2_campaign_info)
         return self.site1_campaign_info, self.site2_campaign_info, success
@@ -975,10 +973,9 @@ class ServerScraper:
                 if isinstance(item, dict):
                     site_name = item.get('site', '')
                     camp_type = item.get('type', 'Campaign')
-                    camps = item.get('camps', '0')
                     remaining = item.get('remaining', '0')
                     prefix = f"[{site_name}] " if site_name else ""
-                    lines.append(f"{prefix}({camp_type}): {camps} - {remaining}")
+                    lines.append(f"{prefix}({camp_type}): {remaining}")
                 else:
                     lines.append(str(item))
 
@@ -991,39 +988,46 @@ class ServerScraper:
             self.log(f"❌ Lỗi ghi {OUTPUT_FILE}: {e}")
 
     def _build_telegram_message(self):
-        """Tạo nội dung tin nhắn Telegram rút gọn cho cả 2 site."""
+        """Tạo nội dung tin nhắn Telegram rút gọn cho cả 2 site (ưu tiên Win lên trước)."""
         telegram_message = ""
 
-        # Site 1
-        domain1 = urlparse(self.url1).netloc
-        short_name1 = domain1.split('.')[-1].capitalize()
-        if self.site1_campaign_info:
-            for item in self.site1_campaign_info:
-                if isinstance(item, dict):
-                    camp_type = item.get('type', 'Campaign')
-                    camps = item.get('camps', '0')
-                    remaining = item.get('remaining', '0')
-                    telegram_message += f"{short_name1} ({camp_type}): {camps} - {remaining}\n"
-                else:
-                    telegram_message += f"{short_name1}: {item}\n"
-        else:
-            telegram_message += f"{short_name1}: ❌\n"
+        site_entries = []
 
-        # Site 2
+        # Site 2 (Win)
         if self.username2 and self.password2:
             domain2 = urlparse(self.url2).netloc
             short_name2 = domain2.split('.')[-1].capitalize()
-            if self.site2_campaign_info:
-                for item in self.site2_campaign_info:
+            site_entries.append((short_name2, self.site2_campaign_info))
+
+        # Site 1 (App)
+        domain1 = urlparse(self.url1).netloc
+        short_name1 = domain1.split('.')[-1].capitalize()
+        site_entries.append((short_name1, self.site1_campaign_info))
+
+        # Đảm bảo site Win luôn đứng trước App
+        site_entries.sort(key=lambda s: 0 if 'win' in s[0].lower() else 1)
+
+        for short_name, camp_info_list in site_entries:
+            if camp_info_list:
+                step4_code = "0"
+                social_code = "0"
+                has_dict = False
+
+                for item in camp_info_list:
                     if isinstance(item, dict):
-                        camp_type = item.get('type', 'Campaign')
-                        camps = item.get('camps', '0')
-                        remaining = item.get('remaining', '0')
-                        telegram_message += f"{short_name2} ({camp_type}): {camps} - {remaining}\n"
-                    else:
-                        telegram_message += f"{short_name2}: {item}\n"
+                        has_dict = True
+                        c_type = item.get('type')
+                        if c_type == 'Google':
+                            step4_code = item.get('remaining', '0')
+                        elif c_type == 'Social':
+                            social_code = item.get('remaining', '0')
+
+                if has_dict:
+                    telegram_message += f"{short_name}: {step4_code} step4 - {social_code} social\n"
+                else:
+                    telegram_message += f"{short_name}: " + " - ".join(str(x) for x in camp_info_list) + "\n"
             else:
-                telegram_message += f"{short_name2}: ❌\n"
+                telegram_message += f"{short_name}: ❌\n"
 
         return telegram_message
 
@@ -1091,7 +1095,7 @@ class ServerScraper:
                     if success:
                         self.log(f"✅ Scrape thành công (mất {elapsed:.1f}s)")
 
-                        all_campaign_info = list(self.site1_campaign_info) + list(self.site2_campaign_info)
+                        all_campaign_info = list(self.site2_campaign_info) + list(self.site1_campaign_info)
                         self._write_output_file(iteration, all_campaign_info)
 
                         telegram_message = self._build_telegram_message()
