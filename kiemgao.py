@@ -1030,19 +1030,29 @@ class ServerScraper:
                 'social': social_code
             })
 
+        valid_dicts = [p for p in parsed_sites if p['has_dict']]
+        max_s4 = max([len(p['step4']) for p in valid_dicts] or [2])
+        max_sc = max([len(p['social']) for p in valid_dicts] or [2])
+        max_s4 = max(max_s4, 2)
+        max_sc = max(max_sc, 2)
+
         lines = []
         for p in parsed_sites:
             if p['camp_info_list']:
                 if p['has_dict']:
+                    s4_part = f"{p['step4']:>{max_s4}} step4"
+                    sc_part = f"{p['social']:>{max_sc}} social"
                     lines.append(f"{p['name']}:")
-                    lines.append(f"{p['step4']} step4 - {p['social']} social")
+                    lines.append(f"{s4_part} - {sc_part}")
                 else:
                     lines.append(f"{p['name']}:")
                     lines.append(" - ".join(str(x) for x in p['camp_info_list']))
             else:
                 lines.append(f"{p['name']}: ❌")
 
-        return "\n".join(lines)
+        raw_text = "\n".join(lines)
+        # Thẻ <pre> giúp Telegram hiển thị phông chữ monospace (căn thẳng hàng tuyệt đối)
+        return f"<pre>{raw_text}</pre>"
 
     def _countdown(self):
         """Đếm ngược tới lần scrape tiếp theo, có thể ngắt bằng stop event."""
