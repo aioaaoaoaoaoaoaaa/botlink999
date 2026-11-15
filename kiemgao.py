@@ -1016,8 +1016,8 @@ class ServerScraper:
         short_name1 = domain1.split('.')[-1].capitalize()
         site_entries.append((short_name1, self.site1_campaign_info))
 
-        # Đảm bảo site Win luôn đứng trước App.
-        site_entries.sort(key=lambda s: 0 if 'win' in s[0].lower() else 1)
+        # Đảm bảo site App luôn đứng trước Win trong thông báo.
+        site_entries.sort(key=lambda s: 0 if 'app' in s[0].lower() else 1)
 
         lines = []
         for short_name, camp_info_list in site_entries:
