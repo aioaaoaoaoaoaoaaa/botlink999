@@ -762,8 +762,14 @@ class ServerScraper:
 
                     campaign_info = success_elem.evaluate('''
                         (element) => {
-                            const card = element.closest('.l9-camp-card');
-                            if (!card) return null;
+                            let card = element.parentElement;
+                            while (card && card !== document.body) {
+                                const badge = card.querySelector('.badge');
+                                const valueElement = card.querySelector('strong.text-success');
+                                if (badge && valueElement === element) break;
+                                card = card.parentElement;
+                            }
+                            if (!card || card === document.body) return null;
 
                             const badge = card.querySelector('.badge');
                             const rawName = (badge?.innerText || badge?.textContent || '').trim();
