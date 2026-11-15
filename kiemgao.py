@@ -740,7 +740,7 @@ class ServerScraper:
     # ------------------------------ Core scrape ------------------------------
 
     def _read_campaign_info(self, page, site_name):
-        """Đọc thông tin campaign từ dashboard (Google 4 Step & Social)."""
+        """Đọc số mã còn lại của Google 4/3/2/1 Step và Social từ từng campaign card."""
         results = []
         self.log("=" * 60)
         self.log(f"📊 [{site_name}] TIẾN ĐỘ & PHÂN BỔ SỐ MÃ THEO CAMPAIGN:")
@@ -762,38 +762,27 @@ class ServerScraper:
 
                     campaign_info = success_elem.evaluate('''
                         (element) => {
-                            let parent = element.parentElement;
-                            while (parent && parent.tagName !== 'BODY') {
-                                const disp = parent.style?.display || (window.getComputedStyle ? window.getComputedStyle(parent).display : '');
-                                if (disp && disp.includes('flex')) break;
-                                parent = parent.parentElement;
-                            }
-                            if (!parent || parent.tagName === 'BODY') return null;
+                            const card = element.closest('.l9-camp-card');
+                            if (!card) return null;
 
-                            const flexContainer = parent.parentElement || parent;
-                            const badges = flexContainer.querySelectorAll('.badge');
-                            for (const badge of badges) {
-                                const text = (badge.innerText || badge.textContent || '').trim();
-                                let campType = null;
-                                if (text.toLowerCase().includes('google 4 step')) {
-                                    campType = 'Google';
-                                } else if (/soci(c)?al/i.test(text)) {
-                                    campType = 'Social';
-                                }
-                                if (!campType) continue;
+                            const badge = card.querySelector('.badge');
+                            const rawName = (badge?.innerText || badge?.textContent || '').trim();
+                            const normalized = rawName.toLowerCase().replace(/\\s+/g, ' ');
+                            let campType = null;
 
-                                let small = badge.parentElement ? badge.parentElement.querySelector('small') : null;
-                                if (!small) {
-                                    small = parent.querySelector('small');
-                                }
-                                const smallText = small ? (small.innerText || small.textContent || '') : '';
-                                const m = smallText.match(/(\\d[\\d,.]*)\\s*camp/i);
-                                return {
-                                    type: campType,
-                                    camps: m ? m[1] : null
-                                };
+                            if (/google\\s*4\\s*step/i.test(normalized)) {
+                                campType = 'Google 4 Step';
+                            } else if (/google\\s*3\\s*step/i.test(normalized)) {
+                                campType = 'Google 3 Step';
+                            } else if (/google\\s*2\\s*step/i.test(normalized)) {
+                                campType = 'Google 2 Step';
+                            } else if (/google\\s*\\(?1\\s*step\\)?/i.test(normalized)) {
+                                campType = 'Google 1 Step';
+                            } else if (/soci(?:al|cal)/i.test(normalized)) {
+                                campType = 'Social';
                             }
-                            return null;
+
+                            return campType ? {type: campType} : null;
                         }
                     ''')
 
@@ -808,13 +797,18 @@ class ServerScraper:
                             'remaining': remaining_codes
                         })
                     else:
-                        self.log(f"ℹ️ [{site_name}] Bỏ qua element #{idx + 1} (không phải Google 4 Step hoặc Social)")
+                        self.log(f"ℹ️ [{site_name}] Bỏ qua element #{idx + 1} (không thuộc campaign được hỗ trợ)")
                 except Exception as e:  # noqa: BLE001
                     self.log(f"Lỗi khi đọc campaign element #{idx + 1}: {e}")
                     continue
 
-            # Sắp xếp để Google luôn đứng trước Social nếu cả 2 cùng xuất hiện
-            order_map = {'Google': 0, 'Social': 1}
+            order_map = {
+                'Google 4 Step': 0,
+                'Google 3 Step': 1,
+                'Google 2 Step': 2,
+                'Google 1 Step': 3,
+                'Social': 4,
+            }
             results.sort(key=lambda x: order_map.get(x.get('type'), 99))
 
         except Exception as e:  # noqa: BLE001
@@ -988,7 +982,14 @@ class ServerScraper:
             self.log(f"❌ Lỗi ghi {OUTPUT_FILE}: {e}")
 
     def _build_telegram_message(self):
-        """Tạo nội dung tin nhắn Telegram rút gọn cho cả 2 site (ưu tiên Win lên trước, căn lề gọn gàng)."""
+        """Tạo tin nhắn Telegram với đủ 5 loại campaign theo thứ tự chuẩn."""
+        campaign_order = [
+            'Google 4 Step',
+            'Google 3 Step',
+            'Google 2 Step',
+            'Google 1 Step',
+            'Social',
+        ]
         site_entries = []
 
         # Site 2 (Win)
@@ -1002,56 +1003,22 @@ class ServerScraper:
         short_name1 = domain1.split('.')[-1].capitalize()
         site_entries.append((short_name1, self.site1_campaign_info))
 
-        # Đảm bảo site Win luôn đứng trước App
+        # Đảm bảo site Win luôn đứng trước App.
         site_entries.sort(key=lambda s: 0 if 'win' in s[0].lower() else 1)
 
-        # Trích xuất dữ liệu để tính khoảng cách tối ưu (gọn gàng, không bị cách xa)
-        parsed_sites = []
-        for short_name, camp_info_list in site_entries:
-            step4_code = "0"
-            social_code = "0"
-            has_dict = False
-
-            if camp_info_list:
-                for item in camp_info_list:
-                    if isinstance(item, dict):
-                        has_dict = True
-                        c_type = item.get('type')
-                        if c_type == 'Google':
-                            step4_code = str(item.get('remaining', '0')).strip()
-                        elif c_type == 'Social':
-                            social_code = str(item.get('remaining', '0')).strip()
-
-            parsed_sites.append({
-                'name': short_name,
-                'camp_info_list': camp_info_list,
-                'has_dict': has_dict,
-                'step4': step4_code,
-                'social': social_code
-            })
-
-        valid_dicts = [p for p in parsed_sites if p['has_dict']]
-        max_s4 = max([len(p['step4']) for p in valid_dicts] or [2])
-        max_sc = max([len(p['social']) for p in valid_dicts] or [2])
-        max_s4 = max(max_s4, 2)
-        max_sc = max(max_sc, 2)
-
         lines = []
-        for p in parsed_sites:
-            if p['camp_info_list']:
-                if p['has_dict']:
-                    s4_part = f"{p['step4']:>{max_s4}} step4"
-                    sc_part = f"{p['social']:>{max_sc}} social"
-                    lines.append(f"{p['name']}:")
-                    lines.append(f"{s4_part} - {sc_part}")
-                else:
-                    lines.append(f"{p['name']}:")
-                    lines.append(" - ".join(str(x) for x in p['camp_info_list']))
-            else:
-                lines.append(f"{p['name']}: ❌")
+        for short_name, camp_info_list in site_entries:
+            values = {camp_type: '0' for camp_type in campaign_order}
+            for item in camp_info_list or []:
+                if isinstance(item, dict) and item.get('type') in values:
+                    values[item['type']] = str(item.get('remaining', '0')).strip()
+
+            lines.append(f"{short_name}:")
+            for camp_type in campaign_order:
+                lines.append(f"{camp_type}: {values[camp_type]}")
 
         raw_text = "\n".join(lines)
-        # Thẻ <pre> giúp Telegram hiển thị phông chữ monospace (căn thẳng hàng tuyệt đối)
+        # Thẻ <pre> giúp Telegram hiển thị phông chữ monospace.
         return f"<pre>{raw_text}</pre>"
 
     def _countdown(self):
