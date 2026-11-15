@@ -996,6 +996,13 @@ class ServerScraper:
             'Google 1 Step',
             'Social',
         ]
+        telegram_labels = {
+            'Google 4 Step': '4 Step',
+            'Google 3 Step': '3 Step',
+            'Google 2 Step': '2 Step',
+            'Google 1 Step': '1 Step',
+            'Social': 'Social',
+        }
         site_entries = []
 
         # Site 2 (Win)
@@ -1021,7 +1028,7 @@ class ServerScraper:
 
             lines.append(f"{short_name}:")
             for camp_type in campaign_order:
-                lines.append(f"{camp_type}: {values[camp_type]}")
+                lines.append(f"{telegram_labels[camp_type]}: {values[camp_type]}")
 
         raw_text = "\n".join(lines)
         # Thẻ <pre> giúp Telegram hiển thị phông chữ monospace.
