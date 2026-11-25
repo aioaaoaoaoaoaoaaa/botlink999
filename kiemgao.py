@@ -1034,13 +1034,11 @@ class ServerScraper:
                     remaining = str(item.get('remaining', '0')).strip()
                     values[item['type']] = f"{camps} - {remaining}"
 
-            lines.append(f"{short_name}:")
+            lines.append(f"<code>{short_name}:</code>")
             for camp_type in campaign_order:
-                lines.append(f"{telegram_labels[camp_type]:<6}: {values[camp_type]}")
+                lines.append(f"<code>{telegram_labels[camp_type]:<6}:</code> {values[camp_type]}")
 
-        raw_text = "\n".join(lines)
-        # Thẻ <pre> giúp Telegram hiển thị phông chữ monospace.
-        return f"<pre>{raw_text}</pre>"
+        return "\n".join(lines)
 
     def _countdown(self):
         """Đếm ngược tới lần scrape tiếp theo, có thể ngắt bằng stop event."""
