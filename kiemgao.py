@@ -788,18 +788,24 @@ class ServerScraper:
                                 campType = 'Social';
                             }
 
-                            return campType ? {type: campType} : null;
+                            const small = badge?.parentElement?.querySelector('small') || card.querySelector('small');
+                            const smallText = small ? (small.innerText || small.textContent || '') : '';
+                            const m = smallText.match(/(\\d[\\d,.]*)\\s*camp/i);
+
+                            return campType ? {type: campType, camps: m ? m[1] : null} : null;
                         }
                     ''')
 
                     if campaign_info:
                         camp_type = campaign_info.get('type') or "Unknown"
-                        campaign_line = f"({camp_type}) {remaining_codes}"
+                        camps = campaign_info.get('camps') or "0"
+                        campaign_line = f"({camp_type}) {camps} - {remaining_codes}"
                         print(campaign_line)
-                        self.log(f"   🎯 [{site_name}] {camp_type}: {remaining_codes} mã")
+                        self.log(f"   🎯 [{site_name}] {camp_type}: {camps} camp | {remaining_codes} mã")
                         results.append({
                             'site': site_name,
                             'type': camp_type,
+                            'camps': camps,
                             'remaining': remaining_codes
                         })
                     else:
@@ -1021,10 +1027,12 @@ class ServerScraper:
 
         lines = []
         for short_name, camp_info_list in site_entries:
-            values = {camp_type: '0' for camp_type in campaign_order}
+            values = {camp_type: '0 - 0' for camp_type in campaign_order}
             for item in camp_info_list or []:
                 if isinstance(item, dict) and item.get('type') in values:
-                    values[item['type']] = str(item.get('remaining', '0')).strip()
+                    camps = str(item.get('camps', '0')).strip()
+                    remaining = str(item.get('remaining', '0')).strip()
+                    values[item['type']] = f"{camps} - {remaining}"
 
             lines.append(f"{short_name}:")
             for camp_type in campaign_order:
