@@ -997,10 +997,10 @@ class ServerScraper:
             'Social',
         ]
         telegram_labels = {
-            'Google 4 Step': '4 Step',
-            'Google 3 Step': '3 Step',
-            'Google 2 Step': '2 Step',
-            'Google 1 Step': '1 Step',
+            'Google 4 Step': 'Mã 4',
+            'Google 3 Step': 'Mã 3',
+            'Google 2 Step': 'Mã 2',
+            'Google 1 Step': 'Mã 1',
             'Social': 'Social',
         }
         site_entries = []
