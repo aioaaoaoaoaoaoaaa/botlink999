@@ -1027,12 +1027,10 @@ class ServerScraper:
 
         lines = []
         for short_name, camp_info_list in site_entries:
-            values = {camp_type: '0 - 0' for camp_type in campaign_order}
+            values = {camp_type: '0' for camp_type in campaign_order}
             for item in camp_info_list or []:
                 if isinstance(item, dict) and item.get('type') in values:
-                    camps = str(item.get('camps', '0')).strip()
-                    remaining = str(item.get('remaining', '0')).strip()
-                    values[item['type']] = f"{camps} - {remaining}"
+                    values[item['type']] = str(item.get('remaining', '0')).strip()
 
             lines.append(f"<code>{short_name}:</code>")
             for camp_type in campaign_order:
